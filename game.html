@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>2D Flight Simulator</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0b1c2d;
+      color: white;
+      font-family: Arial;
+      text-align: center;
+    }
+    canvas {
+      display: block;
+      margin: auto;
+      background: linear-gradient(#5db3ff, #0b1c2d);
+      border: 2px solid #444;
+    }
+    h2 {
+      margin: 10px;
+    }
+    .controls {
+      margin: 15px;
+    }
+    input {
+      padding: 8px;
+      margin: 5px;
+      border: none;
+      border-radius: 5px;
+    }
+    button {
+      padding: 8px 15px;
+      margin: 5px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    .leaderboard {
+      margin: 20px auto;
+      background: #1a3a52;
+      padding: 15px;
+      border-radius: 8px;
+      max-width: 600px;
+      text-align: left;
+    }
+    .leaderboard h3 {
+      margin-top: 0;
+      text-align: center;
+    }
+    .score-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px;
+      border-bottom: 1px solid #444;
+    }
+    .score-row:last-child {
+      border-bottom: none;
+    }
+  </style>
+</head>
+<body>
+
+<h2>✈️ Flight Simulator</h2>
+<p>Roll (X-axis) | Pitch (Y-axis)</p>
+
+<div class="controls">
+  <input type="text" id="userName" placeholder="Enter your name" maxlength="20">
+  <button onclick="startGame()">Start Game</button>
+  <button onclick="clearScores()">Clear Scores</button>
+</div>
+
+<canvas id="game" width="800" height="500"></canvas>
+
+<div class="leaderboard" id="leaderboard">
+  <h3>🏆 Leaderboard</h3>
+  <div id="scoresList"></div>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// ---------- STORAGE ----------
+const STORAGE_KEY = "flightSimulatorScores";
+
+let gameData = {
+  scores: []
+};
+
+let currentUser = "";
+
+// Load data from localStorage
+function loadGameData() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored) {
+    gameData = JSON.parse(stored);
+  }
+}
+
+// Save data to localStorage
+function saveGameData() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(gameData));
+}
+
+// Add score
+function addScore(userName, scoreValue, causeOfDeath) {
+  gameData.scores.push({
+    id: Date.now(),
+    username: userName,
+    score: scoreValue,
+    date: new Date().toLocaleString(),
+    causeOfDeath: causeOfDeath
+  });
+  gameData.scores.sort((a, b) => b.score - a.score);
+  if (gameData.scores.length > 10) {
+    gameData.scores = gameData.scores.slice(0, 10);
+  }
+  saveGameData();
+  updateLeaderboard();
+}
+
+// Update leaderboard display
+function updateLeaderboard() {
+  const scoresList = document.getElementById("scoresList");
+  scoresList.innerHTML = "";
+  
+  if (gameData.scores.length === 0) {
+    scoresList.innerHTML = "<p style='text-align: center; color: #888;'>No scores yet</p>";
+    return;
+  }
+  
+  gameData.scores.forEach((item, index) => {
+    const row = document.createElement("div");
+    row.className = "score-row";
+    row.innerHTML = `
+      <span>#${index + 1} <strong>${item.username}</strong></span>
+      <span><strong>${item.score}</strong> pts (${item.causeOfDeath})</span>
+    `;
+    scoresList.appendChild(row);
+  });
+}
+
+// Clear all scores
+function clearScores() {
+  if (confirm("Clear all scores?")) {
+    gameData.scores = [];
+    saveGameData();
+    updateLeaderboard();
+  }
+}
+
+// ---------- GAMEPAD ----------
+let gamepadIndex = null;
+const DEAD_ZONE = 0.2;
+
+// ---------- PLAYER ----------
+let plane = {
+  x: 200,
+  y: 250,
+  speed: 3,
+  roll: 0,
+  pitch: 0
+};
+
+// ---------- WORLD ----------
+let rings = [];
+let terrain = [];
+let wind = 0;
+
+// ---------- GAME STATE ----------
+let score = 0;
+let gameOver = false;
+let gameRunning = false;
+let causeOfDeath = "";
+
+// ---------- GAMEPAD EVENTS ----------
+window.addEventListener("gamepadconnected", e => {
+  gamepadIndex = e.gamepad.index;
+});
+
+window.addEventListener("gamepaddisconnected", () => {
+  gamepadIndex = null;
+});
+
+// ---------- START GAME ----------
+function startGame() {
+  const nameInput = document.getElementById("userName");
+  currentUser = nameInput.value.trim();
+  
+  if (!currentUser) {
+    alert("Please enter your name!");
+    return;
+  }
+  
+  gameOver = false;
+  gameRunning = true;
+  score = 0;
+  rings = [];
+  terrain = [];
+  plane.y = 250;
+  plane.x = 200;
+  causeOfDeath = "";
+  nameInput.disabled = true;
+}
+
+// ---------- CREATE OBJECTS ----------
+function createRing() {
+  rings.push({
+    x: canvas.width + 50,
+    y: Math.random() * 350 + 50,
+    r: 30,
+    passed: false
+  });
+}
+
+function createTerrain() {
+  terrain.push({
+    x: canvas.width,
+    height: Math.random() * 120 + 80
+  });
+}
+
+// ---------- INPUT ----------
+function readGamepad() {
+  if (gamepadIndex === null) return;
+
+  const gp = navigator.getGamepads()[gamepadIndex];
+  if (!gp) return;
+
+  const x = gp.axes[0] || 0;
+  const y = gp.axes[1] || 0;
+
+  plane.roll = Math.abs(x) > DEAD_ZONE ? x : 0;
+  plane.pitch = Math.abs(y) > DEAD_ZONE ? y : 0;
+}
+
+// ---------- UPDATE ----------
+function update() {
+  if (!gameRunning || gameOver) return;
+
+  readGamepad();
+
+  wind += (Math.random() - 0.5) * 0.02;
+  wind = Math.max(-0.3, Math.min(0.3, wind));
+
+  plane.y += plane.pitch * 4 + wind;
+  plane.x += plane.roll * 2;
+
+  rings.forEach(r => r.x -= plane.speed);
+  terrain.forEach(t => t.x -= plane.speed);
+
+  // OUT OF BOUNDS CHECK
+  if (plane.y < 0) {
+    gameOver = true;
+    causeOfDeath = "Out of Bounds (Top)";
+    endGame();
+  } else if (plane.y > canvas.height) {
+    gameOver = true;
+    causeOfDeath = "Out of Bounds (Bottom)";
+    endGame();
+  } else if (plane.x < 0) {
+    gameOver = true;
+    causeOfDeath = "Out of Bounds (Left)";
+    endGame();
+  } else if (plane.x > canvas.width) {
+    gameOver = true;
+    causeOfDeath = "Out of Bounds (Right)";
+    endGame();
+  }
+
+  rings.forEach(r => {
+    const dx = plane.x - r.x;
+    const dy = plane.y - r.y;
+    if (Math.sqrt(dx * dx + dy * dy) < r.r) {
+      if (!r.passed) {
+        score += 10;
+        r.passed = true;
+      }
+    }
+  });
+
+  terrain.forEach(t => {
+    if (
+      plane.x > t.x &&
+      plane.x < t.x + 40 &&
+      plane.y > canvas.height - t.height
+    ) {
+      gameOver = true;
+      causeOfDeath = "Terrain Collision";
+      endGame();
+    }
+  });
+
+  rings = rings.filter(r => r.x > -50);
+  terrain = terrain.filter(t => t.x > -50);
+
+  if (Math.random() < 0.02) createRing();
+  if (Math.random() < 0.03) createTerrain();
+}
+
+// ---------- END GAME ----------
+function endGame() {
+  gameRunning = false;
+  addScore(currentUser, score, causeOfDeath);
+  document.getElementById("userName").disabled = false;
+}
+
+// ---------- DRAW ----------
+function drawPlane() {
+  ctx.save();
+  ctx.translate(plane.x, plane.y);
+  ctx.rotate(plane.roll * 0.6);
+  ctx.fillStyle = "white";
+  ctx.beginPath();
+  ctx.moveTo(15, 0);
+  ctx.lineTo(-10, -8);
+  ctx.lineTo(-6, 0);
+  ctx.lineTo(-10, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw boundary guides
+  ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+  ctx.strokeRect(0, 0, canvas.width, canvas.height);
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = "yellow";
+  ctx.lineWidth = 4;
+  rings.forEach(r => {
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  ctx.fillStyle = "#2c5f2d";
+  terrain.forEach(t => {
+    ctx.fillRect(t.x, canvas.height - t.height, 40, t.height);
+  });
+
+  drawPlane();
+
+  ctx.fillStyle = "white";
+  ctx.font = "16px Arial";
+  ctx.fillText("Score: " + score, 10, 20);
+  if (currentUser) {
+    ctx.fillText("Player: " + currentUser, 10, 40);
+  }
+
+  if (gameOver) {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "red";
+    ctx.font = "bold 30px Arial";
+    ctx.fillText("CRASHED", canvas.width / 2 - 90, canvas.height / 2 - 20);
+    ctx.fillStyle = "white";
+    ctx.font = "16px Arial";
+    ctx.fillText("Cause: " + causeOfDeath, canvas.width / 2 - 80, canvas.height / 2 + 20);
+    ctx.fillText("Final Score: " + score, canvas.width / 2 - 80, canvas.height / 2 + 50);
+  }
+}
+
+// ---------- LOOP ----------
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Initialize
+loadGameData();
+updateLeaderboard();
+loop();
+</script>
+
+</body>
+</html>
